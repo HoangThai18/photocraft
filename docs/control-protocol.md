@@ -157,7 +157,7 @@ How each MCP tool maps onto control methods in bridge mode:
 | `doc_render_preview {max_side?}` | `ui.screenshot`, returned directly as PNG image content |
 | `session_list`, `ui_inspect` | `ui.inspect` |
 | `ui_screenshot {max_side?}` | `ui.screenshot`, returned as PNG image content |
-| `ui_pointer {events, modifiers?}` | `ui.pointer` |
+| `ui_pointer {events, modifiers?, button?}` | `ui.pointer` (other arguments are an error) |
 | `ui_menu_invoke {id}` | `ui.menu.invoke` |
 | `ui_set {fields}` | `ui.set` |
 | `control_call {method, params}` | any method, passed through unchanged |
