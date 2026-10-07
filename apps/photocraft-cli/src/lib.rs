@@ -22,7 +22,9 @@ USAGE:
       Open a file, run engine commands in order, save the result. Each --params
       applies to the preceding --cmd. Prints each command's JSON result.
   photocraft-cli batch --actions <actions.json> --in <dir> --out <dir> [--format <ext>] [--quality <1-100>]
-      Apply an action list ([{\"command\": id, \"params\": {…}}, …]) to every image in a directory.
+      Apply an action list to every image in a directory. Steps are [id, params] pairs,
+      {\"command\": id, \"params\": {…}} objects or bare ids, as a recorded action or droplet stores them
+      (a list, or wrapped in {\"actions\": …}, {\"steps\": …} or a droplet).
   photocraft-cli droplet <file.pcdroplet> <file-or-dir>… [--out <dir>]
       Run a droplet (File › Automate › Create Droplet) on images and folders.
   photocraft-cli commands [--json] [--filter <text>]
@@ -264,22 +266,12 @@ fn run_cmds(a: &Args, out: &mut dyn Write, err: &mut dyn Write) -> R {
     Ok(())
 }
 
-/// Parse an actions file: `[{"command": id, "params": {…}}]` or
-/// `{"actions": [...]}`; `"id"` is accepted for `"command"`.
+/// Parse an actions file: the steps of a recorded action or a droplet (`[id, params]` pairs,
+/// `{"command": id, "params": {…}}` objects or bare ids; `"id"` is accepted for `"command"`), as a
+/// list or wrapped in `{"actions": […]}`, `{"steps": […]}` or a droplet (#489).
 pub fn parse_actions(text: &str) -> Result<Vec<(String, Value)>, String> {
     let v: Value = serde_json::from_str(text).map_err(|e| format!("actions JSON: {e}"))?;
-    let list = match &v {
-        Value::Array(a) => a.clone(),
-        Value::Object(m) => m.get("actions").and_then(Value::as_array).cloned().ok_or("actions JSON: expected an array or {\"actions\": [...]}")?,
-        _ => return Err("actions JSON: expected an array".into()),
-    };
-    list.into_iter()
-        .enumerate()
-        .map(|(i, a)| {
-            let id = a.get("command").or_else(|| a.get("id")).and_then(Value::as_str).ok_or_else(|| format!("action {i}: missing \"command\""))?;
-            Ok((id.to_owned(), a.get("params").cloned().unwrap_or_else(|| json!({}))))
-        })
-        .collect()
+    photocraft_engine::automate_cmds::parse_action(v.get("actions").unwrap_or(&v), "batch --actions").map_err(|e| e.to_string())
 }
 
 fn is_input(p: &Path) -> bool {

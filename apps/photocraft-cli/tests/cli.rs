@@ -212,6 +212,20 @@ fn parse_actions_formats() {
     assert!(photocraft_cli::parse_actions(r#"{"actions":[{"command":"c"}]}"#).unwrap().len() == 1);
     assert!(photocraft_cli::parse_actions(r#"[{"params":{}}]"#).is_err());
     assert!(photocraft_cli::parse_actions("7").is_err());
+    // #489: the step shapes a recorded action and a droplet store, bare or wrapped.
+    let want = vec![("a".to_string(), json!({"x":1})), ("b".to_string(), json!({}))];
+    for text in [
+        r#"[["a",{"x":1}],["b"]]"#,
+        r#"[["a",{"x":1}],"b"]"#,
+        r#"{"steps":[["a",{"x":1}],["b",{}]]}"#,
+        r#"{"photocraftDroplet":1,"action":{"steps":[["a",{"x":1}],{"command":"b"}]}}"#,
+        r#"{"actions":[["a",{"x":1}],["b",{}]]}"#,
+    ] {
+        assert_eq!(photocraft_cli::parse_actions(text).unwrap(), want, "{text}");
+    }
+    for text in ["[42]", "[[]]", "[[7,{}]]", r#"{"name":"x"}"#] {
+        assert!(photocraft_cli::parse_actions(text).is_err(), "{text}");
+    }
 }
 
 /// Runs `batch` on `input` with `actions` (saved as `<name>.json`), writing to the folder `<d>/<name>`.
@@ -219,6 +233,34 @@ fn batch_with(d: &Path, input: &Path, name: &str, actions: &str, extra: &[&str])
     let file = d.join(format!("{name}.json"));
     std::fs::write(&file, actions).unwrap();
     bin().args(["batch", "--actions"]).arg(&file).arg("--in").arg(input).arg("--out").arg(d.join(name)).args(extra).output().unwrap()
+}
+
+/// #489: `batch --actions` takes `[id, params]` steps and a droplet's steps, with the same results
+/// as the object form; a malformed step fails before anything is written.
+#[test]
+fn batch_accepts_recorded_action_steps() {
+    let d = tmp("batch-steps");
+    let input = d.join("in");
+    std::fs::create_dir_all(&input).unwrap();
+    write_png(&input.join("a.png"), 8, 4, 3);
+    write_png(&input.join("b.png"), 6, 5, 9);
+    let shapes = [
+        ("objects", r#"[{"command":"image.adjustments.invert"}]"#),
+        ("pairs", r#"[["image.adjustments.invert",{}]]"#),
+        ("ids", r#"["image.adjustments.invert"]"#),
+        ("droplet", r#"{"photocraftDroplet":1,"action":{"steps":[["image.adjustments.invert",{}]]}}"#),
+    ];
+    for (name, actions) in shapes {
+        let o = batch_with(&d, &input, name, actions, &[]);
+        assert!(o.status.success(), "{name}: {}", String::from_utf8_lossy(&o.stderr));
+        assert!(String::from_utf8_lossy(&o.stdout).contains("2 succeeded, 0 failed"), "{name}");
+        for f in ["a.png", "b.png"] {
+            assert_eq!(std::fs::read(d.join(name).join(f)).unwrap(), std::fs::read(d.join("objects").join(f)).unwrap(), "{name}/{f}");
+        }
+    }
+    let o = batch_with(&d, &input, "bad", "[42]", &[]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(!d.join("bad").exists(), "nothing written");
 }
 
 /// #490: a leading dot on `--format` doesn't double the dot in output names.
