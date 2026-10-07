@@ -319,6 +319,52 @@ fn quality_outside_1_to_100_is_refused() {
     assert!(sizes[0] <= sizes[1] && sizes[1] <= sizes[2], "{sizes:?}");
 }
 
+/// #492: an `--out` folder that is the `--in` folder, however it is spelt, is refused before
+/// anything is written, unless `--in-place` asks for it.
+#[test]
+fn batch_refuses_to_write_over_its_inputs() {
+    let d = tmp("batch-in-place");
+    let input = d.join("in");
+    std::fs::create_dir_all(&input).unwrap();
+    write_png(&input.join("a.png"), 8, 4, 3);
+    let img = photocraft_codecs::Image::from_u8(8, 4, photocraft_codecs::ChannelLayout::Rgb, vec![90; 96]).unwrap();
+    std::fs::write(input.join("a.tif"), photocraft_codecs::encode(&img, photocraft_codecs::Format::Tiff, &Default::default()).unwrap()).unwrap();
+    let actions = d.join("actions.json");
+    std::fs::write(&actions, r#"[{"command":"image.adjustments.invert"}]"#).unwrap();
+    let snapshot = || {
+        let mut files: Vec<(PathBuf, Vec<u8>)> =
+            std::fs::read_dir(&input).unwrap().map(|e| e.unwrap().path()).map(|p| (p.clone(), std::fs::read(p).unwrap())).collect();
+        files.sort();
+        files
+    };
+    let before = snapshot();
+    let batch = |out: &Path, extra: &[&str]| {
+        bin().current_dir(&d).args(["batch", "--actions"]).arg(&actions).args(["--in", "in", "--out"]).arg(out).args(extra).output().unwrap()
+    };
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&input, d.join("link")).unwrap();
+    let link = cfg!(unix).then(|| PathBuf::from("link"));
+    for out in [PathBuf::from("in"), PathBuf::from("./in/"), input.clone(), input.join(".")].iter().chain(&link) {
+        for extra in [&[][..], &["--format", "tif"][..]] {
+            let o = batch(out, extra);
+            let err = String::from_utf8_lossy(&o.stderr);
+            assert_eq!(o.status.code(), Some(1), "--out {} {extra:?}: {err}", out.display());
+            assert!(err.contains("is the --in folder") && err.contains("--in-place"), "{err}");
+            assert_eq!(snapshot(), before, "--out {} {extra:?} changed the originals", out.display());
+        }
+    }
+    // A separate folder runs as before, leaving the originals alone.
+    let (out, _) = ok(bin().current_dir(&d).args(["batch", "--actions"]).arg(&actions).args(["--in", "in", "--out", "out"]));
+    assert!(out.contains("2 succeeded, 0 failed"), "{out}");
+    assert_eq!(snapshot(), before);
+    // `--in-place` opts in: each result replaces its original.
+    let o = batch(Path::new("in"), &["--in-place"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let after = snapshot();
+    assert_eq!(after.len(), 2);
+    assert!(after.iter().zip(&before).all(|(a, b)| a.0 == b.0 && a.1 != b.1), "both inputs replaced");
+}
+
 #[test]
 fn commands_listing() {
     let (out, _) = ok(bin().arg("commands"));

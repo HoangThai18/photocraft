@@ -21,10 +21,11 @@ USAGE:
   photocraft-cli run (<file> | --new <json>) --cmd <id> [--params <json>] [--cmd …] [--out <file>] [--format <ext>] [--quality <1-100>]
       Open a file, run engine commands in order, save the result. Each --params
       applies to the preceding --cmd. Prints each command's JSON result.
-  photocraft-cli batch --actions <actions.json> --in <dir> --out <dir> [--format <ext>] [--quality <1-100>]
+  photocraft-cli batch --actions <actions.json> --in <dir> --out <dir> [--format <ext>] [--quality <1-100>] [--in-place]
       Apply an action list to every image in a directory. Steps are [id, params] pairs,
       {\"command\": id, \"params\": {…}} objects or bare ids, as a recorded action or droplet stores them
-      (a list, or wrapped in {\"actions\": …}, {\"steps\": …} or a droplet).
+      (a list, or wrapped in {\"actions\": …}, {\"steps\": …} or a droplet). An --out folder that is the
+      --in folder is refused, as the results would replace the originals; --in-place allows it.
   photocraft-cli droplet <file.pcdroplet> <file-or-dir>… [--out <dir>]
       Run a droplet (File › Automate › Create Droplet) on images and folders.
   photocraft-cli commands [--json] [--filter <text>]
@@ -61,7 +62,7 @@ const SUBCOMMANDS: &[Subcommand] = &[
     Subcommand { name: "convert", values: &["--format", "--quality"], bare: &[], run: convert },
     Subcommand { name: "info", values: &[], bare: &["--compact"], run: |a, out, _| info(a, out) },
     Subcommand { name: "run", values: &["--new", "--cmd", "--params", "--out", "--format", "--quality"], bare: &[], run: run_cmds },
-    Subcommand { name: "batch", values: &["--actions", "--in", "--out", "--format", "--quality"], bare: &[], run: batch },
+    Subcommand { name: "batch", values: &["--actions", "--in", "--out", "--format", "--quality"], bare: &["--in-place"], run: batch },
     Subcommand { name: "droplet", values: &["--out"], bare: &[], run: droplet },
     Subcommand { name: "commands", values: &["--filter"], bare: &["--json"], run: |a, out, _| commands(a, out) },
     Subcommand {
@@ -274,6 +275,12 @@ pub fn parse_actions(text: &str) -> Result<Vec<(String, Value)>, String> {
     photocraft_engine::automate_cmds::parse_action(v.get("actions").unwrap_or(&v), "batch --actions").map_err(|e| e.to_string())
 }
 
+/// Whether `a` and `b` name the same existing folder, however they are spelt (relative, with a
+/// trailing separator, through a symbolic link).
+fn same_dir(a: &Path, b: &Path) -> bool {
+    matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
+}
+
 fn is_input(p: &Path) -> bool {
     let known = |e: &str| matches!(e, "pcraft" | "psd" | "psb") || photocraft_codecs::from_extension(e).is_some_and(|f| photocraft_codecs::caps(f).read);
     p.is_file() && p.extension().is_some_and(|e| known(&e.to_string_lossy().to_ascii_lowercase()))
@@ -286,6 +293,14 @@ fn batch(a: &Args, out: &mut dyn Write, err: &mut dyn Write) -> R {
     let text = std::fs::read_to_string(actions_path).map_err(|e| format!("{actions_path}: {e}"))?;
     let actions = parse_actions(&text)?;
     let opts = export_opts(a)?;
+    // Results are saved as `<out>/<stem>.<ext>`, so an `--out` that is the `--in` folder would
+    // replace the originals (#492).
+    if !a.has("--in-place") && same_dir(&in_dir, &out_dir) {
+        return Err(format!(
+            "--out {} is the --in folder, so the results would replace the originals: choose another --out folder, or pass --in-place to overwrite them",
+            out_dir.display()
+        ));
+    }
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
     let mut inputs: Vec<PathBuf> =
         std::fs::read_dir(&in_dir).map_err(|e| format!("{}: {e}", in_dir.display()))?.flatten().map(|e| e.path()).filter(|p| is_input(p)).collect();
