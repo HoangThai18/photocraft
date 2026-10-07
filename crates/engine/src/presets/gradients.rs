@@ -177,7 +177,7 @@ impl GradientPreset {
 }
 
 /// Sorted RGBA colour stops `cs` with transparency stops `(location, opacity 0..1)` multiplied
-/// into their alpha. Where both vary, extra samples keep the product close to Photoshop's
+/// into their alpha. Where both vary, extra samples keep the product close to the reference app's
 /// per-pixel interpolation.
 pub fn apply_opacity(cs: Stops, opacity: &[(f32, f32)]) -> Stops {
     let mut os: Vec<(f32, f32)> = opacity.iter().map(|(t, a)| (t.clamp(0.0, 1.0), a.clamp(0.0, 1.0))).collect();
