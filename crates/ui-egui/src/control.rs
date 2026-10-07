@@ -121,6 +121,16 @@ fn run_waiting(app: &mut PhotocraftApp, wait: bool, run: impl FnOnce(&mut Photoc
     }
 }
 
+/// Screen position of document point (x, y) on the main canvas, where a `ui.pointer` right-click
+/// opens its menu (the mouse's opens at the pointer); the canvas centre when it can't be mapped.
+fn screen_point(app: &PhotocraftApp, x: f64, y: f64) -> [f32; 2] {
+    let p = crate::canvas::ViewXform::active(app)
+        .map(|xf| xf.to_screen(x as f32, y as f32))
+        .filter(|p| p.is_finite())
+        .unwrap_or_else(|| app.last_canvas_rect.center());
+    [p.x, p.y]
+}
+
 pub fn handle(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
     let p = &req.params;
     let s = |k: &str| p.get(k).and_then(Value::as_str);
@@ -366,17 +376,18 @@ pub fn handle(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest
                     "up" => ToolEvent::Up { x, y },
                     _ => ToolEvent::Move { x, y, pressure: pr },
                 };
-                // Right-click with the Move tool, or ⌘/Ctrl+right-click: list the layers there.
-                if matches!(s("button"), Some("secondary" | "right")) && crate::layer_pick_ui::is_gesture(app.ui.tool, mods) {
-                    if matches!(ev, ToolEvent::Down { .. }) {
-                        let at = app.last_canvas_rect.center();
-                        crate::layer_pick_ui::open(app, [at.x, at.y], x, y);
+                if matches!(s("button"), Some("secondary" | "right")) {
+                    let down = matches!(ev, ToolEvent::Down { .. });
+                    // Right-click with the Move tool, or ⌘/Ctrl+right-click: list the layers there.
+                    if crate::layer_pick_ui::is_gesture(app.ui.tool, mods) {
+                        if down {
+                            crate::layer_pick_ui::open(app, screen_point(app, x, y), x, y);
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                if matches!(s("button"), Some("secondary" | "right")) && !crate::paint_mouse::pointer_secondary(app, matches!(ev, ToolEvent::Down { .. }), mods)
-                {
-                    continue;
+                    if !crate::paint_mouse::pointer_secondary(app, down, mods, screen_point(app, x, y)) {
+                        continue;
+                    }
                 }
                 // A simulated pen: tilt/rotation reach the stroke like a real stylus's (see `stylus`).
                 let tilt = |k: &str| e.get(k).and_then(Value::as_f64).map(|v| v as f32);
