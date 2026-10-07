@@ -221,6 +221,25 @@ fn batch_with(d: &Path, input: &Path, name: &str, actions: &str, extra: &[&str])
     bin().args(["batch", "--actions"]).arg(&file).arg("--in").arg(input).arg("--out").arg(d.join(name)).args(extra).output().unwrap()
 }
 
+/// #490: a leading dot on `--format` doesn't double the dot in output names.
+#[test]
+fn batch_format_with_leading_dot() {
+    let d = tmp("batch-dot");
+    let input = d.join("in");
+    std::fs::create_dir_all(&input).unwrap();
+    write_png(&input.join("a.png"), 8, 4, 3);
+    write_png(&input.join("b.png"), 6, 5, 9);
+    let invert = r#"[{"command":"image.adjustments.invert"}]"#;
+    for (name, format) in [("dot", ".jpg"), ("plain", "jpg")] {
+        let o = batch_with(&d, &input, name, invert, &["--format", format]);
+        assert!(o.status.success(), "{format}: {}", String::from_utf8_lossy(&o.stderr));
+        let mut names: Vec<String> = std::fs::read_dir(d.join(name)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        assert_eq!(names, ["a.jpg", "b.jpg"], "{format}");
+        assert_eq!(photocraft_codecs::detect(&std::fs::read(d.join(name).join("a.jpg")).unwrap()), Some(photocraft_codecs::Format::Jpeg));
+    }
+}
+
 /// #491: `--quality` outside 1-100 is an error for every subcommand, whatever the number's size,
 /// and nothing is written.
 #[test]
