@@ -165,8 +165,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 fn export_opts(a: &Args) -> Result<ExportOptions, String> {
     let mut o = ExportOptions::default();
     if let Some(q) = a.get("--quality") {
-        let q: u8 = q.parse().map_err(|_| format!("bad --quality `{q}`"))?;
-        o.encode.jpeg_quality = q.clamp(1, 100);
+        o.encode.jpeg_quality =
+            q.parse().ok().filter(|q| (1..=100).contains(q)).ok_or_else(|| format!("bad --quality `{q}`: expected a whole number from 1 to 100"))?;
     }
     Ok(o)
 }
@@ -186,9 +186,10 @@ fn convert(a: &Args, _out: &mut dyn Write, err: &mut dyn Write) -> R {
     let [input, output] = a.positional.as_slice() else {
         return Err("convert needs <in> <out>".into());
     };
+    let opts = export_opts(a)?;
     let o = files::open(Path::new(input)).map_err(|e| e.to_string())?;
     warn_all(err, &o.warnings);
-    let ws = files::save(&o.document, Path::new(output), a.get("--format"), &export_opts(a)?, None).map_err(|e| e.to_string())?;
+    let ws = files::save(&o.document, Path::new(output), a.get("--format"), &opts, None).map_err(|e| e.to_string())?;
     warn_all(err, &ws);
     Ok(())
 }
@@ -233,6 +234,7 @@ fn command_list(a: &Args) -> Result<Vec<(String, Value)>, String> {
 }
 
 fn run_cmds(a: &Args, out: &mut dyn Write, err: &mut dyn Write) -> R {
+    let opts = export_opts(a)?;
     let mut h = Headless::trusted_local();
     match (a.positional.as_slice(), a.get("--new")) {
         ([file], None) => {
@@ -255,7 +257,7 @@ fn run_cmds(a: &Args, out: &mut dyn Write, err: &mut dyn Write) -> R {
         print_json(out, &json!({"command": id, "result": r}), true)?;
     }
     if let Some(o) = a.get("--out") {
-        let r = h.save(None, Some(Path::new(o)), a.get("--format"), &export_opts(a)?).map_err(|e| e.to_string())?;
+        let r = h.save(None, Some(Path::new(o)), a.get("--format"), &opts).map_err(|e| e.to_string())?;
         let ws: Vec<String> = serde_json::from_value(r["warnings"].clone()).unwrap_or_default();
         warn_all(err, &ws);
     }

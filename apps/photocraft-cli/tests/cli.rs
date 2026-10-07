@@ -214,6 +214,50 @@ fn parse_actions_formats() {
     assert!(photocraft_cli::parse_actions("7").is_err());
 }
 
+/// Runs `batch` on `input` with `actions` (saved as `<name>.json`), writing to the folder `<d>/<name>`.
+fn batch_with(d: &Path, input: &Path, name: &str, actions: &str, extra: &[&str]) -> std::process::Output {
+    let file = d.join(format!("{name}.json"));
+    std::fs::write(&file, actions).unwrap();
+    bin().args(["batch", "--actions"]).arg(&file).arg("--in").arg(input).arg("--out").arg(d.join(name)).args(extra).output().unwrap()
+}
+
+/// #491: `--quality` outside 1-100 is an error for every subcommand, whatever the number's size,
+/// and nothing is written.
+#[test]
+fn quality_outside_1_to_100_is_refused() {
+    let d = tmp("quality");
+    let input = d.join("in");
+    std::fs::create_dir_all(&input).unwrap();
+    let a = input.join("a.png");
+    write_png(&a, 8, 4, 3);
+    let invert = r#"[{"command":"image.adjustments.invert"}]"#;
+    for q in ["0", "101", "255", "256", "1000", "-1", "abc", "50.5", ""] {
+        let out = d.join("q.jpg");
+        let (mut convert, mut run) = (bin(), bin());
+        convert.arg("convert").arg(&a).arg(&out).args(["--quality", q]);
+        run.arg("run").arg(&a).args(["--cmd", "image.adjustments.invert", "--out"]).arg(&out).args(["--quality", q]);
+        for cmd in [&mut convert, &mut run] {
+            let o = cmd.output().unwrap();
+            assert_eq!(o.status.code(), Some(1), "--quality {q}");
+            assert!(String::from_utf8_lossy(&o.stderr).contains(&format!("bad --quality `{q}`: expected a whole number from 1 to 100")), "--quality {q}");
+            assert!(!out.exists(), "--quality {q} wrote a file");
+        }
+        let o = batch_with(&d, &input, "qb", invert, &["--format", "jpg", "--quality", q]);
+        assert_eq!(o.status.code(), Some(1), "batch --quality {q}");
+        assert!(!d.join("qb").exists(), "batch --quality {q} wrote a folder");
+    }
+    // The documented range still encodes, lower quality making a smaller file.
+    let sizes: Vec<usize> = ["1", "50", "100"]
+        .iter()
+        .map(|q| {
+            let out = d.join(format!("q{q}.jpg"));
+            ok(bin().arg("convert").arg(&a).arg(&out).args(["--quality", q]));
+            std::fs::read(out).unwrap().len()
+        })
+        .collect();
+    assert!(sizes[0] <= sizes[1] && sizes[1] <= sizes[2], "{sizes:?}");
+}
+
 #[test]
 fn commands_listing() {
     let (out, _) = ok(bin().arg("commands"));
